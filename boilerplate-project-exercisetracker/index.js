@@ -1,6 +1,7 @@
 const express = require('express')
 const app = express()
 const cors = require('cors')
+const { default: mongoose } = require('mongoose')
 require('dotenv').config()
 
 app.use(cors())
@@ -12,7 +13,6 @@ app.get('/', (req, res) => {
 app.use(express.urlencoded({
   extended: true
 }));
-
 
 mongoose.connect('mongodb://127.0.0.1:27017/freecodecamp-projects');
 
@@ -26,7 +26,7 @@ const exerciseSchema = new mongoose.Schema({
   username: { type: mongoose.Schema.Types.ObjectId, ref: User },
   description: { type: String },
   duration: { type: Number },
-  date: { type: String }
+  date: { type: Date }
 })
 
 let Exercise = mongoose.model('Exercise', exerciseSchema)
@@ -39,27 +39,19 @@ app.post('/api/users', (req, res) => {
     const newUser = new User({ username: username })
     newUser.save().then((savedUser) => {
       res.json(savedUser)
-    }).catch((err) => {
-      res.json("error")
-    })
-  }).catch((err) => {
-    res.json("Error")
-  })
+    }).catch((err) => res.json(err))
+  }).catch((err) => res.json(err))
 })
 
 app.get('/api/users', (req, res) => {
   User.find().then((users) => {
     if (users) return res.json(users)
-  }).catch((err) => {
-    res.json("Error")
-  })
+  }).catch((err) => res.json(err))
 })
 
 app.post('/api/users/:_id/exercises', (req, res) => {
   let { description, duration, date } = req.body
   const { _id } = req.params
-
-  date = new Date(date).toDateString()
 
   User.findById(_id).then((user) => {
     if (!user) return res.json("Error")
@@ -68,47 +60,60 @@ app.post('/api/users/:_id/exercises', (req, res) => {
       username: user._id,
       description: description,
       duration: duration,
-      date: date
+      date: date ? new Date(date) : new Date()
     })
 
     newExercise.save().then((savedExercise) => {
-      return Exercise.findById(savedExercise._id).populate('username', 'username')
-    }).then((populatedExercise) => {
       res.json({
-        _id: populatedExercise._id,
-        username: populatedExercise.username.username,
-        date: populatedExercise.date,
-        duration: populatedExercise.duration,
-        description: populatedExercise.description
+        _id: user._id,
+        username: user.username,
+        date: savedExercise.date.toDateString(),
+        duration: savedExercise.duration,
+        description: savedExercise.description
       })
-    }).catch((err) => {
-      res.json("error")
-    })
-  }).catch((err) => {
-    res.json("Error")
-  })
+    }).catch((err) => res.json(err))
+
+  }).catch((err) => res.json(err))
 })
 
 app.get('/api/users/:_id/logs', (req, res) => {
   const user_id = req.params._id
-  const { from, to, limit } = req.query
+  let { from, to, limit } = req.query
 
-  User.findById(user_id).select('username').then(user => {
-    if (!user) return res.json(err)
-    Exercise.find({ username: user_id }).then(exercises => {
+  limit = limit ? parseInt(limit) : null
 
-      res.json({
-        username: user.username,
+  const filter = { username: user_id }
+
+  if (from || to) {
+    filter.date = {}
+
+    if (from) filter.date.$gte = new Date(from)
+    if (to) filter.date.$lt = new Date(to)
+  }
+
+  User.findById(user_id).then(user => {
+    if (!user) return res.json("Error")
+    Exercise.find(filter).then(exercises => {
+      if (limit) exercises = exercises.slice(0, limit)
+      const response = {
         _id: user._id,
+        username: user.username,
         count: exercises.length,
-        log: exercises.map(e => ({
-          description: e.description,
-          duration: e.duration,
-          date: e.date
-        }))
-      })
-    })
-  })
+      }
+
+      if (from) response.from = new Date(from).toDateString()
+      if (to) response.to = new Date(to).toDateString()
+
+      response.log = exercises.map(e => ({
+        description: e.description,
+        duration: e.duration,
+        date: e.date.toDateString()
+      }))
+
+      res.json(response)
+
+    }).catch((err) => console.log({ "Exercise error": err }))
+  }).catch((err) => console.log({ "User error": err }))
 })
 
 const listener = app.listen(process.env.PORT || 3000, () => {
